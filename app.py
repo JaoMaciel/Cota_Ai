@@ -181,7 +181,7 @@ with col_logo_cen:
 
 if st.session_state["mostrar_painel_admin"]:
     st.write("")
-    st.markdown("## 🔒 Autenticação do Administrator")
+    st.markdown("## 🔒 Autenticação do Administrador")
     
     if not st.session_state["autenticado"]:
         with st.form("form_login_admin"):
@@ -265,7 +265,6 @@ if st.session_state["mostrar_painel_admin"]:
             
             if arquivo_enviado is not None:
                 try:
-                    # 1. Leitura inicial estruturada
                     if arquivo_enviado.name.endswith('.csv'):
                         conteudo_inicio = arquivo_enviado.read(1024).decode('utf-8', errors='ignore')
                         arquivo_enviado.seek(0)
@@ -274,38 +273,49 @@ if st.session_state["mostrar_painel_admin"]:
                     else:
                         df_importado = pd.read_excel(arquivo_enviado)
                     
-                    # 2. Correção Inteligente para Linhas unificadas na Coluna A (Caso Pasta1.xlsx)
+                    colunas_necessarias = ["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
+                    
+                    # Correção Robusta para Linhas unificadas na Coluna A separados por vírgula
                     if len(df_importado.columns) == 1:
                         col_unica = df_importado.columns[0]
-                        if ',' in str(col_unica) or df_importado[col_unica].astype(str).str.contains(',').any():
-                            linhas_completas = [col_unica] + df_importado[col_unica].dropna().tolist()
-                            dados_divididos = [linha.split(',') for linha in linhas_completas]
-                            df_importado = pd.DataFrame(dados_divididos)
-                            
-                            colunas_necessarias = ["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
-                            while len(df_importado.columns) < len(colunas_necessarias):
-                                df_importado[len(df_importado.columns)] = ""
-                            
-                            df_importado = df_importado.iloc[:, :len(colunas_necessarias)]
-                            df_importado.columns = colunas_necessarias
+                        linhas_brutas = [str(col_unica)] + df_importado[col_unica].dropna().astype(str).tolist()
+                        
+                        dados_processados = []
+                        for linha in linhas_brutas:
+                            partes = [p.strip() for p in linha.split(',')]
+                            # Garante exatamente 7 colunas preenchendo com string vazia o que faltar
+                            while len(partes) < len(colunas_necessarias):
+                                partes.append("")
+                            dados_processados.append(partes[:len(colunas_necessarias)])
+                        
+                        df_importado = pd.DataFrame(dados_processed, columns=colunas_necessarias)
                     
-                    # Remove espaços das colunas e padroniza para caixa baixa
+                    # Padroniza nomes das colunas
                     df_importado.columns = [str(c).strip().lower() for c in df_importado.columns]
                         
+                    # Preenche valores textuais nulos por segurança antes de exibir
+                    for col in df_importado.columns:
+                        if col != 'ultimo_preco':
+                            df_importado[col] = df_importado[col].astype(str).replace(['None', 'nan', '<NA>'], '')
+                    
                     st.markdown("### 👀 Pré-visualização dos dados importados:")
                     st.dataframe(df_importado.head(5), use_container_width=True)
                     
-                    colunas_necessarias = ["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
                     colunas_validas = all(col in df_importado.columns for col in colunas_necessarias)
                     
                     if colunas_validas:
                         if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
                             conn = sqlite3.connect('cota_ai.db')
                             
-                            # Tratamento fino dos valores de Preço e Strings
+                            # Tratamento dos dados numéricos e strings
                             df_importado['ultimo_preco'] = df_importado['ultimo_preco'].astype(str).str.replace('R$', '', regex=False).str.strip()
                             df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco'], errors='coerce').fillna(0.0)
                             df_importado['whatsapp'] = df_importado['whatsapp'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                            
+                            # Limpeza final de strings textuais para o banco
+                            for c in colunas_necessarias:
+                                if c != 'ultimo_preco':
+                                    df_importado[c] = df_importado[c].fillna('').astype(str)
                             
                             df_importado[colunas_necessarias].to_sql('historico', conn, if_exists='append', index=False)
                             conn.close()
