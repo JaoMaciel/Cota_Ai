@@ -227,7 +227,7 @@ if st.session_state["mostrar_painel_admin"]:
                     column_config={
                         "ultimo_preco": st.column_config.NumberColumn(
                             "Último Preço",
-                            format="R$ %,.2f",
+                            format="R$ %.,2f",
                             help="Preço formatado"
                         )
                     }
@@ -336,7 +336,7 @@ else:
                 column_config={
                     "ultimo_preco": st.column_config.NumberColumn(
                         "Último Preço",
-                        format="R$ %,.2f",
+                        format="R$ %.,2f",
                         help="Preço formatado"
                     )
                 }
