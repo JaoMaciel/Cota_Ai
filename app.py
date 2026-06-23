@@ -223,7 +223,13 @@ if st.session_state["mostrar_painel_admin"]:
                     df_admin,
                     use_container_width=True,
                     hide_index=True,
-                    disabled=["id"]
+                    disabled=["id"],
+                    column_config={
+                        "ultimo_preco": st.column_config.NumberColumn(
+                            "Último Preço",
+                            format="R$ %.2f"
+                        )
+                    }
                 )
                 
                 if st.button("💾 Aplicar Alterações / Exclusões"):
@@ -325,7 +331,13 @@ else:
                 st.session_state["dados_busca"],
                 use_container_width=True,
                 hide_index=True,
-                disabled=["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
+                disabled=["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"],
+                column_config={
+                    "ultimo_preco": st.column_config.NumberColumn(
+                        "Último Preço",
+                        format="R$ %.2f"
+                    )
+                }
             )
             
             itens_selecionados = df_editado[df_editado["Selecionar"] == True]
