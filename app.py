@@ -258,10 +258,18 @@ if st.session_state["mostrar_painel_admin"]:
             
             if arquivo_enviado is not None:
                 try:
+                    # Detecção inteligente de formato e separador
                     if arquivo_enviado.name.endswith('.csv'):
-                        df_importado = pd.read_csv(arquivo_enviado)
+                        # Lê os primeiros caracteres para descobrir o separador correto
+                        conteudo_inicio = arquivo_enviado.read(1024).decode('utf-8', errors='ignore')
+                        arquivo_enviado.seek(0) # Reseta o ponteiro de leitura
+                        separador = ';' if ';' in conteudo_inicio else ','
+                        df_importado = pd.read_csv(arquivo_enviado, sep=separador)
                     else:
                         df_importado = pd.read_excel(arquivo_enviado)
+                    
+                    # Remove espaços em branco extras dos nomes das colunas (evita erros de digitação)
+                    df_importado.columns = [str(c).strip().lower() for c in df_importado.columns]
                         
                     st.markdown("### 👀 Pré-visualização dos dados importados:")
                     st.dataframe(df_importado.head(5), use_container_width=True)
@@ -273,12 +281,12 @@ if st.session_state["mostrar_painel_admin"]:
                         if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
                             conn = sqlite3.connect('cota_ai.db')
                             df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco']).fillna(0.0)
-                            df_importado['whatsapp'] = df_importado['whatsapp'].astype(str)
+                            df_importado['whatsapp'] = df_importado['whatsapp'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                             df_importado[colunas_necessarias].to_sql('historico', conn, if_exists='append', index=False)
                             conn.close()
                             st.success(f"Sucesso! {len(df_importado)} novos registros foram adicionados.")
                     else:
-                        st.error("Erro nos cabeçalhos da planilha.")
+                        st.error("Erro nos cabeçalhos da planilha. Verifique se os nomes das colunas estão exatamente iguais aos exigidos acima.")
                 except Exception as e:
                     st.error(f"Erro ao ler o arquivo: {e}")
 
@@ -290,7 +298,7 @@ else:
         col_input, col_btn = st.columns([4, 1])
         
         with col_input:
-            termo_busca = st.text_input("", placeholder="O que você precisa comprar hoje, Maciel?", label_visibility="collapsed")
+            termo_busca = st.text_input("", placeholder="O que você precisa comprar hoje?", label_visibility="collapsed")
             
         with col_btn:
             clicou_buscar = st.button("Cota Aí")
