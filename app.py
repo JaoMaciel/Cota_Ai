@@ -181,7 +181,7 @@ with col_logo_cen:
 
 if st.session_state["mostrar_painel_admin"]:
     st.write("")
-    st.markdown("## 🔒 Autenticação do Administrador")
+    st.markdown("## 🔒 Autenticação do Administrator")
     
     if not st.session_state["autenticado"]:
         with st.form("form_login_admin"):
@@ -227,7 +227,7 @@ if st.session_state["mostrar_painel_admin"]:
                     column_config={
                         "ultimo_preco": st.column_config.NumberColumn(
                             "Último Preço",
-                            format="R$ %.,2f",
+                            format="R$ %,.2f",
                             help="Preço formatado"
                         )
                     }
@@ -265,17 +265,31 @@ if st.session_state["mostrar_painel_admin"]:
             
             if arquivo_enviado is not None:
                 try:
-                    # Detecção inteligente de formato e separador
+                    # 1. Leitura inicial estruturada
                     if arquivo_enviado.name.endswith('.csv'):
-                        # Lê os primeiros caracteres para descobrir o separador correto
                         conteudo_inicio = arquivo_enviado.read(1024).decode('utf-8', errors='ignore')
-                        arquivo_enviado.seek(0) # Reseta o ponteiro de leitura
+                        arquivo_enviado.seek(0)
                         separador = ';' if ';' in conteudo_inicio else ','
                         df_importado = pd.read_csv(arquivo_enviado, sep=separador)
                     else:
                         df_importado = pd.read_excel(arquivo_enviado)
                     
-                    # Remove espaços em branco extras dos nomes das colunas (evita erros de digitação)
+                    # 2. Correção Inteligente para Linhas unificadas na Coluna A (Caso Pasta1.xlsx)
+                    if len(df_importado.columns) == 1:
+                        col_unica = df_importado.columns[0]
+                        if ',' in str(col_unica) or df_importado[col_unica].astype(str).str.contains(',').any():
+                            linhas_completas = [col_unica] + df_importado[col_unica].dropna().tolist()
+                            dados_divididos = [linha.split(',') for linha in linhas_completas]
+                            df_importado = pd.DataFrame(dados_divididos)
+                            
+                            colunas_necessarias = ["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
+                            while len(df_importado.columns) < len(colunas_necessarias):
+                                df_importado[len(df_importado.columns)] = ""
+                            
+                            df_importado = df_importado.iloc[:, :len(colunas_necessarias)]
+                            df_importado.columns = colunas_necessarias
+                    
+                    # Remove espaços das colunas e padroniza para caixa baixa
                     df_importado.columns = [str(c).strip().lower() for c in df_importado.columns]
                         
                     st.markdown("### 👀 Pré-visualização dos dados importados:")
@@ -287,8 +301,12 @@ if st.session_state["mostrar_painel_admin"]:
                     if colunas_validas:
                         if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
                             conn = sqlite3.connect('cota_ai.db')
-                            df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco']).fillna(0.0)
+                            
+                            # Tratamento fino dos valores de Preço e Strings
+                            df_importado['ultimo_preco'] = df_importado['ultimo_preco'].astype(str).str.replace('R$', '', regex=False).str.strip()
+                            df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco'], errors='coerce').fillna(0.0)
                             df_importado['whatsapp'] = df_importado['whatsapp'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                            
                             df_importado[colunas_necessarias].to_sql('historico', conn, if_exists='append', index=False)
                             conn.close()
                             st.success(f"Sucesso! {len(df_importado)} novos registros foram adicionados.")
@@ -336,7 +354,7 @@ else:
                 column_config={
                     "ultimo_preco": st.column_config.NumberColumn(
                         "Último Preço",
-                        format="R$ %.,2f",
+                        format="R$ %,.2f",
                         help="Preço formatado"
                     )
                 }
