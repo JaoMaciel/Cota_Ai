@@ -96,14 +96,14 @@ st.markdown("""
         padding: 20px !important;
     }
 
-    /* --- ESTILO DO BOTÃO ADM EM HTML (FIXO À DIREITA, COR DO FUNDO, BORDA AZUL) --- */
+    /* --- ESTILO DO BOTÃO ADM EM HTML --- */
     .botao-adm-html {
         position: fixed;
         top: 30px;
         right: 40px;
-        background-color: #0B0F19 !important; /* Mesma cor do fundo */
-        color: #1E90FF !important; /* Texto Azul */
-        border: 1px solid #1E90FF !important; /* Borda Fina Azul */
+        background-color: #0B0F19 !important;
+        color: #1E90FF !important;
+        border: 1px solid #1E90FF !important;
         padding: 6px 16px;
         font-size: 13px;
         font-weight: 600;
@@ -182,12 +182,10 @@ with col_logo_cen:
     else:
         st.markdown("<h1 style='text-align: center; color: #1E90FF;'>COTA AI</h1>", unsafe_allow_html=True)
 
-
 # --- RENDERIZAÇÃO CONDICIONAL DE TELAS ---
-
 if st.session_state["mostrar_painel_admin"]:
     st.write("")
-    st.markdown("## 🔒 Autenticação do Administrator")
+    st.markdown("## 🔒 Autenticação do Administrador")
     
     if not st.session_state["autenticado"]:
         with st.form("form_login_admin"):
@@ -212,19 +210,16 @@ if st.session_state["mostrar_painel_admin"]:
             st.rerun()
             
         st.write("---")
-        
         sub_aba_editar, sub_aba_importar = st.tabs(["📝 Editar/Excluir Registros", "📥 Importar por Lote (Excel/CSV)"])
         
         with sub_aba_editar:
             st.markdown("### 📊 Base de Dados Completa")
-            
             conn = sqlite3.connect('cota_ai.db')
             df_admin = pd.read_sql_query("SELECT * FROM historico", conn)
             conn.close()
             
             if not df_admin.empty:
                 df_admin.insert(0, "Deletar", False)
-                
                 df_admin_editado = st.data_editor(
                     df_admin,
                     use_container_width=True,
@@ -233,8 +228,7 @@ if st.session_state["mostrar_painel_admin"]:
                     column_config={
                         "ultimo_preco": st.column_config.NumberColumn(
                             "Último Preço",
-                            format="R$ %,.2f",
-                            help="Preço formatado"
+                            format="R$ %,.2f"
                         )
                     }
                 )
@@ -257,7 +251,7 @@ if st.session_state["mostrar_painel_admin"]:
                     
                     conn.commit()
                     conn.close()
-                    st.success("Banco de dados synchronized!")
+                    st.success("Banco de dados sincronizado!")
                     st.rerun()
             else:
                 st.info("O banco de dados está vazio.")
@@ -284,18 +278,16 @@ if st.session_state["mostrar_painel_admin"]:
                     if len(df_importado.columns) == 1:
                         col_unica = df_importado.columns[0]
                         linhas_brutas = [str(col_unica)] + df_importado[col_unica].dropna().astype(str).tolist()
-                        
                         dados_processados = []
                         for linha in linhas_brutas:
                             partes = [p.strip() for p in linha.split(',')]
                             while len(partes) < len(colunas_necessarias):
                                 partes.append("")
                             dados_processados.append(partes[:len(colunas_necessarias)])
-                        
                         df_importado = pd.DataFrame(dados_processados, columns=colunas_necessarias)
                     
                     df_importado.columns = [str(c).strip().lower() for c in df_importado.columns]
-                        
+                    
                     for col in df_importado.columns:
                         if col != 'ultimo_preco':
                             df_importado[col] = df_importado[col].astype(str).replace(['None', 'nan', '<NA>'], '')
@@ -308,7 +300,6 @@ if st.session_state["mostrar_painel_admin"]:
                     if colunas_validas:
                         if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
                             conn = sqlite3.connect('cota_ai.db')
-                            
                             df_importado['ultimo_preco'] = df_importado['ultimo_preco'].astype(str).str.replace('R$', '', regex=False).str.strip()
                             df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco'], errors='coerce').fillna(0.0)
                             df_importado['whatsapp'] = df_importado['whatsapp'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -321,7 +312,7 @@ if st.session_state["mostrar_painel_admin"]:
                             conn.close()
                             st.success(f"Sucesso! {len(df_importado)} novos registros foram adicionados.")
                     else:
-                        st.error("Erro nos cabeçalhos da planilha. Verifique se os nomes das colunas estão exatamente iguais aos exigidos acima.")
+                        st.error("Erro nos cabeçalhos da planilha. Verifique se os nomes das colunas estão corretos.")
                 except Exception as e:
                     st.error(f"Erro ao ler o arquivo: {e}")
 
@@ -338,31 +329,19 @@ else:
         with col_btn:
             clicou_buscar = st.button("Cota Aí")
 
-        if (clicou_buscar or termo_busca) and termo_busca:
-            # 1. Normaliza o termo digitado (Tira acentos, Ç e força minúsculo)
+        # Dispara a busca se houver alteração ou clique no botão
+        if clicou_buscar or (termo_busca and ("termo_atual" not in st.session_state or st.session_state["termo_atual"] != normalizar_texto(termo_busca))):
             termo_ajustado = normalizar_texto(termo_busca)
             
-            if "termo_atual" not in st.session_state or st.session_state["termo_atual"] != termo_ajustado:
+            if termo_ajustado:
                 conn = sqlite3.connect('cota_ai.db')
                 query = "SELECT material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra FROM historico"
                 df_completo = pd.read_sql_query(query, conn)
                 conn.close()
                 
                 if not df_completo.empty:
-                    # 2. Cria uma série temporária com os materiais salvos normalizados
                     materiais_normalizados = df_completo['material'].apply(normalizar_texto)
-                    
-                    # 3. NOVO ALGORITMO: Quebra a busca em palavras independentes (Tokens)
-                    palavras_busca = termo_ajustado.split()
-                    
-                    # Inicializa uma máscara aceitando todas as linhas (True)
-                    mascara_filtro = pd.Series(True, index=df_completo.index)
-                    
-                    # Aplica a regra: Cada palavra pesquisada DEVE estar contida no material
-                    for palavra in palavras_busca:
-                        mascara_filtro = mascara_filtro & materiais_normalizados.str.contains(palavra, na=False, regex=False)
-                    
-                    df_resultado = df_completo[mascara_filtro].copy()
+                    df_resultado = df_completo[materiais_normalizados.str.contains(termo_ajustado, na=False, regex=False)].copy()
                     
                     if not df_resultado.empty:
                         df_resultado.insert(0, "Selecionar", False)
@@ -386,8 +365,7 @@ else:
                 column_config={
                     "ultimo_preco": st.column_config.NumberColumn(
                         "Último Preço",
-                        format="R$ %,.2f",
-                        help="Preço formatado"
+                        format="R$ %,.2f"
                     )
                 }
             )
@@ -409,7 +387,6 @@ else:
                         lista_materiais += f"\n- *{m.strip()}*"
                     
                     texto_msg = f"Olá {contato} ({fornecedor}), tudo bem? Poderia cotar o(s) seguinte(s) item(ns) para mim?{lista_materiais}"
-                    
                     chave_dinamica = f"msg_{whatsapp}_{len(group)}"
                     
                     c1, c2 = st.columns([4, 1])
