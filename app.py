@@ -340,8 +340,19 @@ else:
                 conn.close()
                 
                 if not df_completo.empty:
-                    materiais_normalizados = df_completo['material'].apply(normalizar_texto)
-                    df_resultado = df_completo[materiais_normalizados.str.contains(termo_ajustado, na=False, regex=False)].copy()
+                    # Cria uma lista com as palavras que o usuário digitou
+                    palavras_busca = termo_ajustado.split()
+                    
+                    # Função interna para checar se as palavras batem de forma flexível
+                    def checar_compatibilidade(material_banco):
+                        material_norm = normalizar_texto(material_banco)
+                        # Retorna True se qualquer palavra digitada estiver no material do banco
+                        # OU se o material do banco estiver contido no que foi digitado
+                        return any(p in material_norm for p in palavras_busca) or material_norm in termo_ajustado
+
+                    # Aplica o filtro flexível
+                    mascara = df_completo['material'].apply(checar_compatibilidade)
+                    df_resultado = df_completo[mascara].copy()
                     
                     if not df_resultado.empty:
                         df_resultado.insert(0, "Selecionar", False)
