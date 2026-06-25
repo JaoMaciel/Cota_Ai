@@ -150,7 +150,6 @@ inicializar_banco()
 def normalizar_texto(texto):
     if not isinstance(texto, str):
         return ""
-    # Separa os diacríticos das letras (ex: Ç vira C + cedilha, á vira a + acento) e ignora-os na codificação ASCII
     return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII').strip().lower()
 
 # --- CONTROLE DOS ESTADOS DA TELA ---
@@ -166,17 +165,16 @@ if "action" in query_params:
         st.session_state["mostrar_painel_admin"] = True
     elif query_params["action"] == "voltar":
         st.session_state["mostrar_painel_admin"] = False
-    # Limpa os parâmetros da URL para evitar loops
     st.query_params.clear()
     st.rerun()
 
-# 3. RENDERIZAÇÃO DO BOTÃO HTML (Garante cor do fundo e canto superior direito)
+# 3. RENDERIZAÇÃO DO BOTÃO HTML
 if st.session_state["mostrar_painel_admin"]:
     st.markdown('<a href="/?action=voltar" target="_self" class="botao-adm-html">Voltar</a>', unsafe_allow_html=True)
 else:
     st.markdown('<a href="/?action=adm" target="_self" class="botao-adm-html">ADM</a>', unsafe_allow_html=True)
 
-# 4. LOGO CENTRALIZADA E EM TAMANHO MÉDIO EQUILIBRADO
+# 4. LOGO CENTRALIZADA
 col_logo_esq, col_logo_cen, col_logo_dir = st.columns([0.8, 1.4, 0.8])
 with col_logo_cen:
     if os.path.exists("logo.png"):
@@ -283,7 +281,6 @@ if st.session_state["mostrar_painel_admin"]:
                     
                     colunas_necessarias = ["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
                     
-                    # Correção Robusta para Linhas unificadas na Coluna A separados por vírgula
                     if len(df_importado.columns) == 1:
                         col_unica = df_importado.columns[0]
                         linhas_brutas = [str(col_unica)] + df_importado[col_unica].dropna().astype(str).tolist()
@@ -291,17 +288,14 @@ if st.session_state["mostrar_painel_admin"]:
                         dados_processados = []
                         for linha in linhas_brutas:
                             partes = [p.strip() for p in linha.split(',')]
-                            # Garante exatamente 7 colunas preenchendo com string vazia o que faltar
                             while len(partes) < len(colunas_necessarias):
                                 partes.append("")
                             dados_processados.append(partes[:len(colunas_necessarias)])
                         
                         df_importado = pd.DataFrame(dados_processados, columns=colunas_necessarias)
                     
-                    # Padroniza nomes das colunas
                     df_importado.columns = [str(c).strip().lower() for c in df_importado.columns]
                         
-                    # Preenche valores textuais nulos por segurança antes de exibir
                     for col in df_importado.columns:
                         if col != 'ultimo_preco':
                             df_importado[col] = df_importado[col].astype(str).replace(['None', 'nan', '<NA>'], '')
@@ -315,12 +309,10 @@ if st.session_state["mostrar_painel_admin"]:
                         if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
                             conn = sqlite3.connect('cota_ai.db')
                             
-                            # Tratamento dos dados numéricos e strings
                             df_importado['ultimo_preco'] = df_importado['ultimo_preco'].astype(str).str.replace('R$', '', regex=False).str.strip()
                             df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco'], errors='coerce').fillna(0.0)
                             df_importado['whatsapp'] = df_importado['whatsapp'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                             
-                            # Limpeza final de strings textuais para o banco
                             for c in colunas_necessarias:
                                 if c != 'ultimo_preco':
                                     df_importado[c] = df_importado[c].fillna('').astype(str)
@@ -352,18 +344,25 @@ else:
             
             if "termo_atual" not in st.session_state or st.session_state["termo_atual"] != termo_ajustado:
                 conn = sqlite3.connect('cota_ai.db')
-                
-                # Trazemos a tabela inteira para tratar as colunas dinamicamente com Pandas
                 query = "SELECT material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra FROM historico"
                 df_completo = pd.read_sql_query(query, conn)
                 conn.close()
                 
                 if not df_completo.empty:
-                    # 2. Cria uma série temporária com os materiais salvos sem acentos/cedilhas e em minúsculo
+                    # 2. Cria uma série temporária com os materiais salvos normalizados
                     materiais_normalizados = df_completo['material'].apply(normalizar_texto)
                     
-                    # 3. Filtra localizando o termo ajustado dentro dos materiais salvos normalizados
-                    df_resultado = df_completo[materiais_normalizados.str.contains(termo_ajustado, na=False, regex=False)].copy()
+                    # 3. NOVO ALGORITMO: Quebra a busca em palavras independentes (Tokens)
+                    palavras_busca = termo_ajustado.split()
+                    
+                    # Inicializa uma máscara aceitando todas as linhas (True)
+                    mascara_filtro = pd.Series(True, index=df_completo.index)
+                    
+                    # Aplica a regra: Cada palavra pesquisada DEVE estar contida no material
+                    for palavra in palavras_busca:
+                        mascara_filtro = mascara_filtro & materiais_normalizados.str.contains(palavra, na=False, regex=False)
+                    
+                    df_resultado = df_completo[mascara_filtro].copy()
                     
                     if not df_resultado.empty:
                         df_resultado.insert(0, "Selecionar", False)
