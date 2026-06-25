@@ -1,290 +1,233 @@
 import streamlit as st
-import pandas as pd
 import sqlite3
+import pandas as pd
+import urllib.parse
+import os
 import unicodedata
 
-# Configuração da página do Streamlit
-st.set_page_config(page_title="Cota AI", page_icon="🛍️", layout="wide")
+# 1. CONFIGURAÇÃO DA PÁGINA
+st.set_page_config(page_title="Cota AI", page_icon="🔍", layout="wide")
 
-# Inicialização do Banco de Dados SQLite
-def criar_banco():
+# --- INTERFACE VISUAL (MODO DARK + ESTILOS PREMIUM) ---
+st.markdown("""
+    <style>
+    /* Fundo Dark Geral */
+    .stApp {
+        background-color: #0B0F19 !important;
+    }
+    
+    /* Remove elementos nativos */
+    #MainMenu, header, footer { visibility: hidden; }
+    
+    /* Centralizar container principal */
+    .block-container {
+        max-width: 950px !important;
+        padding-top: 3rem !important;
+    }
+    
+    /* BARRA DE PESQUISA ESTILIZADA */
+    div[data-baseweb="input"] {
+        background-color: #1E2330 !important;
+        border: 1px solid #2A3347 !important;
+        border-radius: 28px !important;
+        padding: 4px 20px !important;
+        box-shadow: 0 0 20px rgba(30, 144, 255, 0.1) !important;
+    }
+    
+    div[data-baseweb="base-input"] {
+        background-color: transparent !important;
+    }
+    
+    div[data-baseweb="input"]:focus-within {
+        border-color: #1E90FF !important;
+        box-shadow: 0 0 30px rgba(30, 144, 255, 0.3) !important;
+    }
+    
+    input {
+        color: #F8FAFC !important;
+        font-size: 16px !important;
+    }
+
+    /* BOTÕES AZUIS */
+    div.stButton > button {
+        background-color: #1E90FF !important;
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        border-radius: 24px !important;
+        border: none !important;
+        padding: 10px 25px !important;
+        box-shadow: 0 4px 14px rgba(30, 144, 255, 0.3);
+        transition: all 0.3s ease;
+        width: 100%;
+    }
+    
+    div.stButton > button:hover {
+        background-color: #58C4FF !important;
+        transform: translateY(-2px);
+    }
+
+    /* Estilo das Abas */
+    button[data-baseweb="tab"] {
+        color: #64748B !important;
+        font-weight: 600 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #58C4FF !important;
+        border-bottom: 2px solid #58C4FF !important;
+    }
+
+    h1, h2, h3, p, label, .stMarkdown {
+        color: #E2E8F0 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# 2. FUNÇÕES DE APOIO (INTELIGÊNCIA E BANCO)
+def inicializar_banco():
     conn = sqlite3.connect('cota_ai.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS historico (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            material TEXT NOT NULL,
-            fornecedor TEXT NOT NULL,
-            localidade TEXT,
-            contato TEXT,
-            whatsapp TEXT,
-            ultimo_preco REAL,
-            data_compra TEXT
+            material TEXT, fornecedor TEXT, localidade TEXT, 
+            contato TEXT, whatsapp TEXT, ultimo_preco REAL, data_compra TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
-criar_banco()
-
-# Função auxiliar para remover acentos e caracteres especiais (Ç -> C)
 def remover_acentos(texto):
-    if not isinstance(texto, str):
-        return ""
-    # Separa os acentos das letras e remove os diacríticos
-    texto_sem_acento = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
-    return texto_sem_acento.lower().strip()
+    if not isinstance(texto, str): return ""
+    # Transforma Á -> A, Ç -> C e remove variações de acentos
+    texto_limpo = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
+    return texto_limpo.lower().strip()
 
-# Inicialização das variáveis de estado (Session State)
-if "autenticado" not in st.session_state:
-    st.session_state["autenticado"] = False
-if "dados_busca" not in st.session_state:
-    st.session_state["dados_busca"] = None
-if "termo_atual" not in st.session_state:
-    st.session_state["termo_atual"] = ""
+inicializar_banco()
 
-# Cabeçalho Principal da Aplicação
-st.markdown("<h1 style='text-align: center; color: #1E88E5;'>COTA AI ↪</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-style: italic;'>A inteligência por trás das suas compras.</p>", unsafe_allow_html=True)
+# Estados da sessão
+if "dados_busca" not in st.session_state: st.session_state["dados_busca"] = None
+if "termo_atual" not in st.session_state: st.session_state["termo_atual"] = ""
+if "autenticado" not in st.session_state: st.session_state["autenticado"] = False
+
+# 3. LAYOUT DO TOPO (LOGO CENTRALIZADA)
+col_l1, col_l2, col_l3 = st.columns([1, 1.8, 1])
+with col_l2:
+    # Tenta carregar os nomes possíveis da sua logo
+    logo_path = "logo.png" if os.path.exists("logo.png") else "image_40eed9.png"
+    if os.path.exists(logo_path):
+        st.image(logo_path, use_container_width=True)
+    else:
+        st.markdown("<h1 style='text-align: center; color: #1E90FF; margin-bottom:0;'>COTA AI</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-style: italic; margin-top:0;'>A inteligência por trás das suas compras.</p>", unsafe_allow_html=True)
+
 st.write("---")
 
-# Definição das Abas de Navegação
-aba_busca, aba_cadastro, aba_admin = st.tabs([
-    "🔍 Painel de Cotação", 
-    "➕ Novo Fornecedor", 
-    "🔒 Área do Administrador"
-])
+# 4. NAVEGAÇÃO POR ABAS
+aba_busca, aba_cadastro, aba_admin = st.tabs(["🔍 Painel de Cotação", "➕ Novo Fornecedor", "🔒 Administrador"])
 
 # ==========================================
-# ABA 1: PAINEL DE COTAÇÃO (BUSCA INTELIGENTE)
+# ABA DE BUSCA (A LÓGICA INTELIGENTE)
 # ==========================================
 with aba_busca:
     st.write("")
-    col_input, col_btn = st.columns([4, 1])
+    col_in, col_bt = st.columns([4, 1])
     
-    with col_input:
-        termo_busca = st.text_input("", placeholder="O que você precisa comprar hoje?", label_visibility="collapsed")
-        
-    with col_btn:
-        clicou_buscar = st.button("Cota Aí")
+    with col_in:
+        termo_busca = st.text_input("", placeholder="O que você precisa comprar hoje? (Ex: aco, valvula, plastico)", label_visibility="collapsed")
+    with col_bt:
+        clicou = st.button("Cota Aí")
 
-    if (clicou_buscar or termo_busca) and termo_busca:
-        # Prepara o termo digitado (ex: "aco" ou "valvula")
-        termo_ajustado = remover_acentos(termo_busca)
+    if (clicou or termo_busca) and termo_busca:
+        termo_limpo = remover_acentos(termo_busca)
         
-        if st.session_state["termo_atual"] != termo_ajustado:
+        if st.session_state["termo_atual"] != termo_limpo:
             conn = sqlite3.connect('cota_ai.db')
-            query = "SELECT material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra FROM historico"
-            df_completo = pd.read_sql_query(query, conn)
+            df_completo = pd.read_sql_query("SELECT * FROM historico", conn)
             conn.close()
             
             if not df_completo.empty:
-                # Aplica a limpeza de acentos na coluna de materiais para comparação rápida
-                material_limpo = df_completo['material'].apply(remover_acentos)
-                
-                # Filtra os dados usando a lista limpa
-                df_resultado = df_completo[material_limpo.str.contains(termo_ajustado, na=False, regex=False)].copy()
+                # Filtro Inteligente: Limpa o banco temporariamente para comparar com o termo limpo
+                mask = df_completo['material'].apply(remover_acentos).str.contains(termo_limpo, na=False)
+                df_resultado = df_completo[mask].copy()
                 
                 if not df_resultado.empty:
                     df_resultado.insert(0, "Selecionar", False)
                     st.session_state["dados_busca"] = df_resultado
-                    st.session_state["termo_atual"] = termo_ajustado
+                    st.session_state["termo_atual"] = termo_limpo
                 else:
                     st.session_state["dados_busca"] = None
-                    st.warning("Nenhum histórico encontrado para este material.")
+                    st.warning("Nenhum histórico encontrado para este termo.")
             else:
-                st.session_state["dados_busca"] = None
-                st.warning("O banco de dados está completamente vazio.")
+                st.info("O banco de dados está vazio.")
 
-    # Exibição dos resultados encontrados
     if st.session_state["dados_busca"] is not None:
-        st.write("")
-        st.markdown("### ✨ Selecione os itens que deseja cotar:")
-        
-        # Configuração e exibição do editor de dados com formatação de moeda brasileira
-        df_editavel = st.data_editor(
+        st.markdown("### ✨ Itens encontrados no histórico:")
+        df_editado = st.data_editor(
             st.session_state["dados_busca"],
+            use_container_width=True,
             hide_index=True,
             column_config={
-                "Selecionar": st.column_config.CheckboxColumn(help="Marque para incluir na cotação"),
-                "material": "material",
-                "fornecedor": "fornecedor",
-                "localidade": "localidade",
-                "contato": "contato",
-                "whatsapp": "whatsapp",
-                "ultimo_preco": st.column_config.NumberColumn("Último Preço", format="R$ %.2f"),
-                "data_compra": "data_compra"
+                "id": None, # Esconde o ID
+                "ultimo_preco": st.column_config.NumberColumn("Último Preço", format="R$ %,.2f"),
+                "Selecionar": st.column_config.CheckboxColumn("Cotar?", default=False)
             },
-            disabled=["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"],
-            use_container_width=True
+            disabled=["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
         )
         
-        # Ação para disparar as mensagens dos itens marcados
-        itens_selecionados = df_editavel[df_editavel["Selecionar"] == True]
-        if st.button("Gerar Cotação para Selecionados") and not itens_selecionados.empty:
-            st.success(f"Cotação iniciada para {len(itens_selecionados)} fornecedor(es)!")
-            # Aqui você pode plugar a sua lógica de envio de mensagens do WhatsApp futuramente
+        # Lógica de agrupamento para WhatsApp (Opcional: você pode adicionar o botão de Zap aqui se desejar)
+        selecionados = df_editado[df_editado["Selecionar"] == True]
+        if not selecionados.empty:
+             if st.button("📱 Abrir WhatsApp com Selecionados"):
+                st.info("Funcionalidade de link de WhatsApp pode ser integrada aqui.")
 
 # ==========================================
-# ABA 2: CADASTRO MANUAL DE FORNECEDORES
+# ABA DE CADASTRO
 # ==========================================
 with aba_cadastro:
-    st.subheader("📝 Cadastrar Novo Registro de Compra")
-    
-    with st.form("form_cadastro", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            mat = st.text_input("Nome do Material *")
-            forn = st.text_input("Nome do Fornecedor *")
-            loc = st.text_input("Localidade / Cidade")
-            cont = st.text_input("Nome do Contato")
-        with col2:
-            zap = st.text_input("WhatsApp (com DDD)")
-            preco = st.number_input("Último Preço Pago (R$)", min_value=0.0, step=0.01, format="%.2f")
-            data = st.text_input("Data da Compra (DD/MM/AAAA)")
-            
-        enviar = st.form_submit_button("Salvar Registro")
+    st.markdown("### 📝 Cadastrar Compra Manual")
+    with st.form("form_cad", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            m = st.text_input("Material *")
+            f = st.text_input("Fornecedor *")
+            l = st.text_input("Localidade")
+        with c2:
+            w = st.text_input("WhatsApp (DDD+Número)")
+            p = st.number_input("Preço (R$)", min_value=0.0, format="%.2f")
+            d = st.text_input("Data (DD/MM/AA)")
         
-        if enviar:
-            if not mat or not forn:
-                st.error("Por favor, preencha os campos obrigatórios (*).")
-            else:
+        if st.form_submit_button("Salvar Registro"):
+            if m and f:
                 conn = sqlite3.connect('cota_ai.db')
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO historico (material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (mat.strip(), forn.strip(), loc.strip(), cont.strip(), zap.strip(), preco, data.strip()))
+                conn.execute("INSERT INTO historico (material, fornecedor, localidade, whatsapp, ultimo_preco, data_compra) VALUES (?,?,?,?,?,?)", 
+                             (m.upper(), f.upper(), l.upper(), w, p, d))
                 conn.commit()
                 conn.close()
-                st.success(f"Registro de '{mat}' cadastrado com sucesso!")
-                # Força a limpeza do cache de buscas anteriores
-                st.session_state["termo_atual"] = ""
+                st.success("Salvo com sucesso!")
+                st.session_state["termo_atual"] = "" # Limpa busca para atualizar
+            else:
+                st.error("Preencha Material e Fornecedor.")
 
 # ==========================================
-# ABA 3: ÁREA DO ADMINISTRADOR (GESTÃO & LOTES)
+# ABA ADMINISTRADOR
 # ==========================================
 with aba_admin:
-    st.subheader("🔐 Autenticação do Administrador")
-    
     if not st.session_state["autenticado"]:
-        senha = st.text_input("Digite a senha master:", type="password")
-        if st.button("Acessar Painel"):
-            if senha == "admin123":  # Substitua pela sua senha de preferência
+        senha = st.text_input("Senha de Acesso", type="password")
+        if st.button("Entrar"):
+            if senha == "admin123": # Altere sua senha aqui
                 st.session_state["autenticado"] = True
                 st.rerun()
-            else:
-                st.error("Senha incorreta!")
+            else: st.error("Senha incorreta.")
     else:
-        st.sidebar.success("Autenticado como Administrador!")
-        if st.sidebar.button("Fazer Logout"):
+        st.subheader("⚙️ Gestão de Dados")
+        conn = sqlite3.connect('cota_ai.db')
+        df_adm = pd.read_sql_query("SELECT * FROM historico", conn)
+        conn.close()
+        
+        st.data_editor(df_adm, use_container_width=True, hide_index=True, 
+                       column_config={"ultimo_preco": st.column_config.NumberColumn(format="R$ %,.2f")})
+        
+        if st.button("Sair do Painel ADM"):
             st.session_state["autenticado"] = False
             st.rerun()
-            
-        sub_aba_gerenciar, sub_aba_lote = st.tabs(["📝 Editar/Excluir Registros", "📥 Importar por Lote (Excel/CSV)"])
-        
-        # SUB-ABA: Gerenciar Banco Existente
-        with sub_aba_gerenciar:
-            conn = sqlite3.connect('cota_ai.db')
-            df_admin = pd.read_sql_query("SELECT * FROM historico", conn)
-            conn.close()
-            
-            if df_admin.empty:
-                st.info("Nenhum dado cadastrado no sistema ainda.")
-            else:
-                df_admin.insert(0, "Deletar", False)
-                
-                df_admin_editado = st.data_editor(
-                    df_admin,
-                    hide_index=True,
-                    column_config={
-                        "Deletar": st.column_config.CheckboxColumn(),
-                        "id": st.column_config.NumberColumn("ID", disabled=True),
-                        "ultimo_preco": st.column_config.NumberColumn("Último Preço", format="R$ %.2f")
-                    },
-                    use_container_width=True
-                )
-                
-                col_btn_salvar, col_btn_deletar = st.columns(2)
-                
-                with col_btn_salvar:
-                    if st.button("Salvar Alterações da Tabela"):
-                        conn = sqlite3.connect('cota_ai.db')
-                        cursor = conn.cursor()
-                        for _, row in df_admin_editado.iterrows():
-                            cursor.execute('''
-                                UPDATE historico 
-                                SET material=?, fornecedor=?, localidade=?, contato=?, whatsapp=?, ultimo_preco=?, data_compra=?
-                                WHERE id=?
-                            ''', (row['material'], row['fornecedor'], row['localidade'], row['contato'], row['whatsapp'], row['ultimo_preco'], row['data_compra'], row['id']))
-                        conn.commit()
-                        conn.close()
-                        st.success("Alterações salvas com sucesso!")
-                        st.session_state["termo_atual"] = ""
-                        st.rerun()
-                        
-                with col_btn_deletar:
-                    ids_para_deletar = df_admin_editado[df_admin_editado["Deletar"] == True]["id"].tolist()
-                    if ids_para_deletar and st.button("Excluir Itens Selecionados", type="primary"):
-                        conn = sqlite3.connect('cota_ai.db')
-                        cursor = conn.cursor()
-                        for id_del in ids_para_deletar:
-                            cursor.execute("DELETE FROM historico WHERE id=?", (id_del,))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"{len(ids_para_deletar)} item(ns) removido(s) com sucesso!")
-                        st.session_state["termo_atual"] = ""
-                        st.rerun()
-
-        # SUB-ABA: Importação por Lote via Arquivo
-        with sub_aba_lote:
-            st.markdown("### 📥 Upload de Planilhas por Lote")
-            st.write("A sua planilha deve conter exatamente as seguintes colunas de cabeçalho:")
-            st.code("material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra")
-            
-            arquivo_enviado = st.file_uploader("Selecione um arquivo Excel (.xlsx) ou CSV", type=["xlsx", "csv"])
-            
-            if arquivo_enviado is not None:
-                try:
-                    if arquivo_enviado.name.endswith('.csv'):
-                        df_lote = pd.read_csv(arquivo_enviado)
-                    else:
-                        df_lote = pd.read_excel(arquivo_enviado)
-                        
-                    colunas_obrigatorias = ["material", "fornecedor", "localidade", "contato", "whatsapp", "ultimo_preco", "data_compra"]
-                    
-                    if all(col in df_lote.columns for col in colunas_obrigatorias):
-                        df_lote = df_lote[colunas_obrigatorias].copy()
-                        
-                        st.markdown("### 👀 Pré-visualização dos dados importados:")
-                        st.dataframe(df_lote, use_container_width=True)
-                        
-                        if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
-                            conn = sqlite3.connect('cota_ai.db')
-                            cursor = conn.cursor()
-                            
-                            for _, linha in df_lote.iterrows():
-                                # Tratamento para valores nulos/vazios numéricos
-                                preco_linha = 0.0 if pd.isna(linha['ultimo_preco']) else float(linha['ultimo_preco'])
-                                
-                                cursor.execute('''
-                                    INSERT INTO historico (material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                                ''', (
-                                    str(linha['material']).strip(),
-                                    str(linha['fornecedor']).strip(),
-                                    "" if pd.isna(linha['localidade']) else str(linha['localidade']).strip(),
-                                    "" if pd.isna(linha['contato']) else str(linha['contato']).strip(),
-                                    "" if pd.isna(linha['whatsapp']) else str(linha['whatsapp']).strip(),
-                                    preco_linha,
-                                    "" if pd.isna(linha['data_compra']) else str(linha['data_compra']).strip()
-                                ))
-                                
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Sucesso! {len(df_lote)} novos registros inseridos.")
-                            st.session_state["termo_atual"] = ""
-                    else:
-                        st.error("Erro nos cabeçalhos da planilha. Certifique-se de que as colunas combinam exatamente com o exemplo apresentado.")
-                except Exception as e:
-                    st.error(f"Erro ao ler o arquivo: {e}")
