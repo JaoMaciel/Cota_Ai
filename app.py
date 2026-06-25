@@ -390,18 +390,19 @@ else:
                 agrupado = itens_selecionados.groupby("whatsapp")
                 
                 for whatsapp, group in agrupado:
-                    fornecedor = group["fornecedor"].iloc[0]
                     contato = group["contato"].iloc[0]
+                    fornecedor = group["fornecedor"].iloc[0]
                     
-                    lista_materiais = ""
-                    for m in group["material"].tolist():
-                        lista_materiais += f"\n- *{m.strip()}*"
+                    # Usa o termo exato que o usuário digitou na barra de pesquisa como descrição
+                    descricao_produto = termo_busca.strip() if termo_busca else group["material"].iloc[0]
                     
-                    texto_msg = f"Olá {contato} ({fornecedor}), tudo bem? Poderia cotar o(s) seguinte(s) item(ns) para mim?{lista_materiais}"
+                    # Monta a mensagem usando apenas o nome do vendedor e a descrição digitada
+                    texto_msg = f"Olá {contato}, tudo bem? Poderia cotar o(s) seguinte(s) item(ns) para mim?\n- *{descricao_produto}*"
                     chave_dinamica = f"msg_{whatsapp}_{len(group)}"
                     
                     c1, c2 = st.columns([4, 1])
                     with c1:
+                        # Exibe o título da caixa com o nome do fornecedor apenas para identificação visual no app
                         msg_customizada = st.text_area(f"Mensagem para {fornecedor}:", value=texto_msg, height=140, key=chave_dinamica)
                     with c2:
                         texto_url = urllib.parse.quote(msg_customizada)
