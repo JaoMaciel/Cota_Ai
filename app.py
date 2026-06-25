@@ -181,7 +181,7 @@ with col_logo_cen:
 
 if st.session_state["mostrar_painel_admin"]:
     st.write("")
-    st.markdown("## 🔒 Autenticação do Administrador")
+    st.markdown("## 🔒 Autenticação do Administrator")
     
     if not st.session_state["autenticado"]:
         with st.form("form_login_admin"):
@@ -288,7 +288,7 @@ if st.session_state["mostrar_painel_admin"]:
                                 partes.append("")
                             dados_processados.append(partes[:len(colunas_necessarias)])
                         
-                        df_importado = pd.DataFrame(dados_processed, columns=colunas_necessarias)
+                        df_importado = pd.DataFrame(dados_processados, columns=colunas_necessarias)
                     
                     # Padroniza nomes das colunas
                     df_importado.columns = [str(c).strip().lower() for c in df_importado.columns]
@@ -339,16 +339,27 @@ else:
             clicou_buscar = st.button("Cota Aí")
 
         if (clicou_buscar or termo_busca) and termo_busca:
-            if "termo_atual" not in st.session_state or st.session_state["termo_atual"] != termo_busca:
+            # Tratamento da string de busca para minúsculo
+            termo_ajustado = termo_busca.strip().lower()
+            
+            if "termo_atual" not in st.session_state or st.session_state["termo_atual"] != termo_ajustado:
                 conn = sqlite3.connect('cota_ai.db')
-                query = f"SELECT material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra FROM historico WHERE material LIKE '%{termo_busca}%'"
-                df_resultado = pd.read_sql_query(query, conn)
+                
+                # Query inteligente usando LOWER() e LIKE parametrizado de forma segura
+                query = """
+                    SELECT material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra 
+                    FROM historico 
+                    WHERE LOWER(material) LIKE ?
+                """
+                
+                # Executa passando os curingas % ao redor do termo ajustado
+                df_resultado = pd.read_sql_query(query, conn, params=(f"%{termo_ajustado}%",))
                 conn.close()
                 
                 if not df_resultado.empty:
                     df_resultado.insert(0, "Selecionar", False)
                     st.session_state["dados_busca"] = df_resultado
-                    st.session_state["termo_atual"] = termo_busca
+                    st.session_state["termo_atual"] = termo_ajustado
                 else:
                     st.session_state["dados_busca"] = None
                     st.warning("Nenhum histórico encontrado para este material.")
