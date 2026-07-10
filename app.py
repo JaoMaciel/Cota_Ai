@@ -166,7 +166,12 @@ def get_engine():
         )
         st.stop()
     try:
-        return create_engine(st.secrets["SUPABASE_URL"], pool_pre_ping=True)
+        url = st.secrets["SUPABASE_URL"]
+        # Usa o driver psycopg (v3), mais compatível com versões recentes do Python
+        # do que o psycopg2. Reescreve a URL automaticamente, sem precisar mexer no Secret.
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return create_engine(url, pool_pre_ping=True)
     except Exception as e:
         st.error(f"Erro ao conectar no banco de dados: {e}")
         st.stop()
