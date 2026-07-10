@@ -1,9 +1,13 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import urllib.parse
 import os
+import time
+import base64
+import hashlib
 import unicodedata
+from datetime import datetime
+from sqlalchemy import create_engine, text, bindparam
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Cota AI", page_icon="🔍", layout="wide")
@@ -117,46 +121,128 @@ st.markdown("""
         color: #58C4FF !important;
         border-color: #58C4FF !important;
     }
+
+    /* --- SPLASH DE CARREGAMENTO --- */
+    .splash-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 75vh;
+    }
+    .splash-logo {
+        opacity: 0;
+        transform: scale(0.85);
+        animation: fadeInScale 1.6s ease forwards;
+        max-width: 340px;
+        width: 100%;
+    }
+    @keyframes fadeInScale {
+        0%   { opacity: 0;   transform: scale(0.85); }
+        60%  { opacity: 1;   transform: scale(1.03); }
+        100% { opacity: 1;   transform: scale(1); }
+    }
+
+    /* --- CARD DE LOGIN / CADASTRO --- */
+    .login-card-wrapper {
+        display: flex;
+        justify-content: center;
+        margin-top: 10px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. BANCO DE DADOS
-def inicializar_banco():
-    conn = sqlite3.connect('cota_ai.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historico (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            material TEXT,
-            fornecedor TEXT,
-            contato TEXT,
-            whatsapp TEXT,
-            ultimo_preco REAL,
-            data_compra TEXT,
-            localidade TEXT
+# 2. BANCO DE DADOS (Postgres via Supabase)
+
+@st.cache_resource
+def get_engine():
+    """Cria (uma única vez por sessão do servidor) a conexão com o Postgres do Supabase.
+    A string de conexão vem dos Secrets do Streamlit — nunca fica exposta no código/GitHub."""
+    if "SUPABASE_URL" not in st.secrets:
+        st.error(
+            "Não encontrei a variável SUPABASE_URL nos Secrets. "
+            "Configure em Settings > Secrets (Streamlit Cloud) ou no arquivo "
+            ".streamlit/secrets.toml (ao rodar localmente)."
         )
-    ''')
+        st.stop()
     try:
-        cursor.execute("ALTER TABLE historico ADD COLUMN localidade TEXT")
-    except sqlite3.OperationalError:
-        pass
-        
-    conn.commit()
-    conn.close()
+        return create_engine(st.secrets["SUPABASE_URL"], pool_pre_ping=True)
+    except Exception as e:
+        st.error(f"Erro ao conectar no banco de dados: {e}")
+        st.stop()
+
+
+def inicializar_banco():
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS historico (
+                id SERIAL PRIMARY KEY,
+                material TEXT,
+                fornecedor TEXT,
+                contato TEXT,
+                whatsapp TEXT,
+                ultimo_preco REAL,
+                data_compra TEXT,
+                localidade TEXT
+            )
+        '''))
+
+        # Tabela de usuários comuns (login/cadastro)
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id SERIAL PRIMARY KEY,
+                nome_completo TEXT,
+                empresa TEXT,
+                funcao TEXT,
+                avatar TEXT,
+                email TEXT,
+                senha_hash TEXT,
+                data_criacao TEXT
+            )
+        '''))
+
+        # Tabela que guarda automaticamente o que cada usuário pediu para cotar
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS solicitacoes (
+                id SERIAL PRIMARY KEY,
+                usuario_id INTEGER,
+                termo_buscado TEXT,
+                data_hora TEXT
+            )
+        '''))
 
 inicializar_banco()
 
-# --- FUNÇÃO AUXILIAR PARA REMOVER ACENTOS E Ç ---
+# --- FUNÇÕES AUXILIARES ---
 def normalizar_texto(texto):
     if not isinstance(texto, str):
         return ""
     return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII').strip().lower()
+
+def hash_senha(senha):
+    """Nunca salvamos a senha em texto puro — apenas o hash dela."""
+    return hashlib.sha256(senha.encode()).hexdigest()
+
+def carregar_logo_base64():
+    if os.path.exists("logo.png"):
+        with open("logo.png", "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
+
+AVATARES = ["🧑‍💼", "👩‍💼", "🧑‍🔧", "👷", "🧑‍💻", "👩‍🔧", "🧑‍🏭", "👨‍💼"]
 
 # --- CONTROLE DOS ESTADOS DA TELA ---
 if "mostrar_painel_admin" not in st.session_state:
     st.session_state["mostrar_painel_admin"] = False
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
+if "splash_mostrado" not in st.session_state:
+    st.session_state["splash_mostrado"] = False
+if "usuario_logado" not in st.session_state:
+    st.session_state["usuario_logado"] = None
+if "tela_auth" not in st.session_state:
+    st.session_state["tela_auth"] = "login"
 
 # Captura cliques vindos do botão HTML através dos parâmetros da URL
 query_params = st.query_params
@@ -168,19 +254,135 @@ if "action" in query_params:
     st.query_params.clear()
     st.rerun()
 
-# 3. RENDERIZAÇÃO DO BOTÃO HTML
+# 3. SPLASH DE CARREGAMENTO (aparece uma única vez por sessão)
+if not st.session_state["splash_mostrado"]:
+    logo_b64 = carregar_logo_base64()
+    if logo_b64:
+        conteudo_logo = f'<img class="splash-logo" src="data:image/png;base64,{logo_b64}">'
+    else:
+        conteudo_logo = '<h1 class="splash-logo" style="color:#1E90FF; font-size:52px; text-align:center;">COTA AI</h1>'
+
+    st.markdown(f"""
+        <div class="splash-container">
+            {conteudo_logo}
+        </div>
+    """, unsafe_allow_html=True)
+
+    time.sleep(1.8)
+    st.session_state["splash_mostrado"] = True
+    st.rerun()
+
+# 4. RENDERIZAÇÃO DO BOTÃO HTML (ADM continua acessível de qualquer tela)
 if st.session_state["mostrar_painel_admin"]:
     st.markdown('<a href="/?action=voltar" target="_self" class="botao-adm-html">Voltar</a>', unsafe_allow_html=True)
 else:
     st.markdown('<a href="/?action=adm" target="_self" class="botao-adm-html">ADM</a>', unsafe_allow_html=True)
 
-# 4. LOGO CENTRALIZADA
+# 5. LOGO CENTRALIZADA
 col_logo_esq, col_logo_cen, col_logo_dir = st.columns([0.8, 1.4, 0.8])
 with col_logo_cen:
     if os.path.exists("logo.png"):
         st.image("logo.png", use_container_width=True)
     else:
         st.markdown("<h1 style='text-align: center; color: #1E90FF;'>COTA AI</h1>", unsafe_allow_html=True)
+
+
+# --- TELAS DE LOGIN E CADASTRO DE USUÁRIO ---
+def tela_login():
+    col_a, col_b, col_c = st.columns([1, 1.3, 1])
+    with col_b:
+        st.markdown("<h3 style='text-align:center;'>Entrar</h3>", unsafe_allow_html=True)
+        with st.form("form_login_usuario"):
+            email = st.text_input("E-mail")
+            senha = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("Entrar")
+
+            if entrar:
+                engine = get_engine()
+                with engine.begin() as conn:
+                    resultado = conn.execute(
+                        text("SELECT id, nome_completo, avatar FROM usuarios WHERE email = :email AND senha_hash = :senha"),
+                        {"email": email.strip().lower(), "senha": hash_senha(senha)}
+                    ).fetchone()
+
+                if resultado:
+                    st.session_state["usuario_logado"] = {
+                        "id": resultado[0],
+                        "nome": resultado[1],
+                        "avatar": resultado[2] or "🧑‍💼"
+                    }
+                    st.rerun()
+                else:
+                    st.error("E-mail ou senha incorretos.")
+
+        st.markdown("<p style='text-align:center;'>Não tem conta?</p>", unsafe_allow_html=True)
+        if st.button("Criar cadastro", use_container_width=True, key="btn_ir_cadastro"):
+            st.session_state["tela_auth"] = "cadastro"
+            st.rerun()
+
+
+def tela_cadastro():
+    col_a, col_b, col_c = st.columns([1, 1.3, 1])
+    with col_b:
+        st.markdown("<h3 style='text-align:center;'>Criar cadastro</h3>", unsafe_allow_html=True)
+        with st.form("form_cadastro_usuario"):
+            avatar = st.selectbox("Escolha um avatar", AVATARES, index=0)
+            nome_completo = st.text_input("Nome completo")
+            nome_empresa = st.text_input("Nome da empresa")
+            funcao = st.text_input("Função na empresa")
+            email = st.text_input("E-mail")
+            senha = st.text_input("Senha", type="password")
+            confirmar_senha = st.text_input("Confirmar senha", type="password")
+
+            criar = st.form_submit_button("Continuar para login")
+
+            if criar:
+                if not nome_completo or not email or not senha:
+                    st.error("Preencha ao menos nome, e-mail e senha.")
+                elif senha != confirmar_senha:
+                    st.error("As senhas não coincidem.")
+                else:
+                    engine = get_engine()
+                    email_normalizado = email.strip().lower()
+
+                    with engine.begin() as conn:
+                        existe = conn.execute(
+                            text("SELECT id FROM usuarios WHERE email = :email"),
+                            {"email": email_normalizado}
+                        ).fetchone()
+
+                        if existe:
+                            st.error("Este e-mail já está cadastrado.")
+                        else:
+                            conn.execute(text('''
+                                INSERT INTO usuarios (nome_completo, empresa, funcao, avatar, email, senha_hash, data_criacao)
+                                VALUES (:nome, :empresa, :funcao, :avatar, :email, :senha, :data)
+                            '''), {
+                                "nome": nome_completo.strip(),
+                                "empresa": nome_empresa.strip(),
+                                "funcao": funcao.strip(),
+                                "avatar": avatar,
+                                "email": email_normalizado,
+                                "senha": hash_senha(senha),
+                                "data": datetime.now().strftime("%Y-%m-%d %H:%M")
+                            })
+                            st.success("Cadastro criado com sucesso! Faça login para continuar.")
+                            st.session_state["tela_auth"] = "login"
+
+        st.markdown("<p style='text-align:center;'>Já tem conta?</p>", unsafe_allow_html=True)
+        if st.button("Entrar", use_container_width=True, key="btn_ir_login"):
+            st.session_state["tela_auth"] = "login"
+            st.rerun()
+
+
+# --- GATE: só passa daqui se estiver no painel admin OU já estiver logado ---
+if not st.session_state["mostrar_painel_admin"] and st.session_state["usuario_logado"] is None:
+    if st.session_state["tela_auth"] == "login":
+        tela_login()
+    else:
+        tela_cadastro()
+    st.stop()
+
 
 # --- RENDERIZAÇÃO CONDICIONAL DE TELAS ---
 if st.session_state["mostrar_painel_admin"]:
@@ -214,9 +416,8 @@ if st.session_state["mostrar_painel_admin"]:
         
         with sub_aba_editar:
             st.markdown("### 📊 Base de Dados Completa")
-            conn = sqlite3.connect('cota_ai.db')
-            df_admin = pd.read_sql_query("SELECT * FROM historico", conn)
-            conn.close()
+            engine = get_engine()
+            df_admin = pd.read_sql_query("SELECT * FROM historico", engine)
             
             if not df_admin.empty:
                 df_admin.insert(0, "Deletar", False)
@@ -234,23 +435,31 @@ if st.session_state["mostrar_painel_admin"]:
                 )
                 
                 if st.button("💾 Aplicar Alterações / Exclusões"):
-                    conn = sqlite3.connect('cota_ai.db')
-                    cursor = conn.cursor()
-                    
-                    deletar_ids = df_admin_editado[df_admin_editado["Deletar"] == True]["id"].tolist()
-                    if deletar_ids:
-                        cursor.execute(f"DELETE FROM historico WHERE id IN ({','.join(map(str, deletar_ids))})")
-                    
-                    salvar_linhas = df_admin_editado[df_admin_editado["Deletar"] == False]
-                    for _, row in salvar_linhas.iterrows():
-                        cursor.execute('''
-                            UPDATE historico 
-                            SET material=?, fornecedor=?, localidade=?, contato=?, whatsapp=?, ultimo_preco=?, data_compra=?
-                            WHERE id=?
-                        ''', (row['material'], row['fornecedor'], row['localidade'], row['contato'], row['whatsapp'], row['ultimo_preco'], row['data_compra'], row['id']))
-                    
-                    conn.commit()
-                    conn.close()
+                    with engine.begin() as conn:
+                        deletar_ids = [int(i) for i in df_admin_editado[df_admin_editado["Deletar"] == True]["id"].tolist()]
+                        if deletar_ids:
+                            stmt_delete = text("DELETE FROM historico WHERE id IN :ids").bindparams(
+                                bindparam("ids", expanding=True)
+                            )
+                            conn.execute(stmt_delete, {"ids": deletar_ids})
+
+                        salvar_linhas = df_admin_editado[df_admin_editado["Deletar"] == False]
+                        for _, row in salvar_linhas.iterrows():
+                            conn.execute(text('''
+                                UPDATE historico
+                                SET material=:material, fornecedor=:fornecedor, localidade=:localidade,
+                                    contato=:contato, whatsapp=:whatsapp, ultimo_preco=:preco, data_compra=:data
+                                WHERE id=:id
+                            '''), {
+                                "material": row['material'],
+                                "fornecedor": row['fornecedor'],
+                                "localidade": row['localidade'],
+                                "contato": row['contato'],
+                                "whatsapp": row['whatsapp'],
+                                "preco": row['ultimo_preco'],
+                                "data": row['data_compra'],
+                                "id": int(row['id'])
+                            })
                     st.success("Banco de dados sincronizado!")
                     st.rerun()
             else:
@@ -299,7 +508,7 @@ if st.session_state["mostrar_painel_admin"]:
                     
                     if colunas_validas:
                         if st.button("🚀 Confirmar e Salvar Tudo no Banco"):
-                            conn = sqlite3.connect('cota_ai.db')
+                            engine = get_engine()
                             df_importado['ultimo_preco'] = df_importado['ultimo_preco'].astype(str).str.replace('R$', '', regex=False).str.strip()
                             df_importado['ultimo_preco'] = pd.to_numeric(df_importado['ultimo_preco'], errors='coerce').fillna(0.0)
                             df_importado['whatsapp'] = df_importado['whatsapp'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -308,8 +517,7 @@ if st.session_state["mostrar_painel_admin"]:
                                 if c != 'ultimo_preco':
                                     df_importado[c] = df_importado[c].fillna('').astype(str)
                             
-                            df_importado[colunas_necessarias].to_sql('historico', conn, if_exists='append', index=False)
-                            conn.close()
+                            df_importado[colunas_necessarias].to_sql('historico', engine, if_exists='append', index=False)
                             st.success(f"Sucesso! {len(df_importado)} novos registros foram adicionados.")
                     else:
                         st.error("Erro nos cabeçalhos da planilha. Verifique se os nomes das colunas estão corretos.")
@@ -317,7 +525,20 @@ if st.session_state["mostrar_painel_admin"]:
                     st.error(f"Erro ao ler o arquivo: {e}")
 
 else:
-    aba_busca, aba_cadastro = st.tabs(["🔍 Painel de Cotação", "➕ Novo Fornecedor"])
+    # --- BARRA DO USUÁRIO LOGADO ---
+    usuario_atual = st.session_state["usuario_logado"]
+    col_user_info, col_user_logout = st.columns([5, 1])
+    with col_user_info:
+        st.markdown(
+            f"<p style='font-size:16px;'>{usuario_atual['avatar']} Olá, <b>{usuario_atual['nome']}</b></p>",
+            unsafe_allow_html=True
+        )
+    with col_user_logout:
+        if st.button("Sair"):
+            st.session_state["usuario_logado"] = None
+            st.rerun()
+
+    aba_busca, aba_cadastro, aba_minhas = st.tabs(["🔍 Painel de Cotação", "➕ Novo Fornecedor", "📋 Minhas Solicitações"])
 
     with aba_busca:
         st.write("")
@@ -334,10 +555,21 @@ else:
             termo_ajustado = normalizar_texto(termo_busca)
             
             if termo_ajustado:
-                conn = sqlite3.connect('cota_ai.db')
+                engine = get_engine()
+
+                # Registra automaticamente essa busca na "lista de compras" do usuário
+                with engine.begin() as conn:
+                    conn.execute(text('''
+                        INSERT INTO solicitacoes (usuario_id, termo_buscado, data_hora)
+                        VALUES (:usuario_id, :termo, :data)
+                    '''), {
+                        "usuario_id": usuario_atual["id"],
+                        "termo": termo_busca.strip(),
+                        "data": datetime.now().strftime("%d/%m/%Y %H:%M")
+                    })
+
                 query = "SELECT material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra FROM historico"
-                df_completo = pd.read_sql_query(query, conn)
-                conn.close()
+                df_completo = pd.read_sql_query(query, engine)
                 
                 if not df_completo.empty:
                     # Cria uma lista com as palavras que o usuário digitou
@@ -425,14 +657,36 @@ else:
             
             if bot_salvar:
                 if novo_material and novo_fornecedor:
-                    conn = sqlite3.connect('cota_ai.db')
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO historico (material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (novo_material, novo_fornecedor, novo_localidade, novo_contato, novo_whats, novo_preco, nova_data))
-                    conn.commit()
-                    conn.close()
+                    engine = get_engine()
+                    with engine.begin() as conn:
+                        conn.execute(text('''
+                            INSERT INTO historico (material, fornecedor, localidade, contato, whatsapp, ultimo_preco, data_compra)
+                            VALUES (:material, :fornecedor, :localidade, :contato, :whatsapp, :preco, :data)
+                        '''), {
+                            "material": novo_material,
+                            "fornecedor": novo_fornecedor,
+                            "localidade": novo_localidade,
+                            "contato": novo_contato,
+                            "whatsapp": novo_whats,
+                            "preco": novo_preco,
+                            "data": nova_data
+                        })
                     st.success("Dados salvos com sucesso!")
                 else:
                     st.error("Preencha os campos obrigatórios (Material e Fornecedor).")
+
+    with aba_minhas:
+        st.markdown("### 📋 Minhas Solicitações de Cotação")
+        st.caption("Todo item que você pesquisou no Painel de Cotação aparece aqui automaticamente.")
+
+        engine = get_engine()
+        df_minhas = pd.read_sql_query(
+            text('SELECT termo_buscado AS "Item Solicitado", data_hora AS "Data/Hora" FROM solicitacoes WHERE usuario_id = :uid ORDER BY id DESC'),
+            engine,
+            params={"uid": usuario_atual["id"]}
+        )
+
+        if not df_minhas.empty:
+            st.dataframe(df_minhas, use_container_width=True, hide_index=True)
+        else:
+            st.info("Você ainda não fez nenhuma solicitação de cotação.")
